@@ -51,8 +51,11 @@ str TMP_REG_0, [sp, #(1 * 8)]
 mov x0, sp
 ldr x1, [sp, #(2 * 8 + 2 * 8 + 30 * 8 + 8 * 16)]
 #if defined(__APPLE__)
-adrp TMP_REG_0, cdecl(common_closure_bridge_handler)@PAGE
-add TMP_REG_0, TMP_REG_0, cdecl(common_closure_bridge_handler)@PAGEOFF
+	adrp TMP_REG_0, cdecl(common_closure_bridge_handler)@PAGE
+	add TMP_REG_0, TMP_REG_0, cdecl(common_closure_bridge_handler)@PAGEOFF
+#elif defined(__PIC__)
+	adrp TMP_REG_0, :got:cdecl(common_closure_bridge_handler)
+	ldr TMP_REG_0, [TMP_REG_0, :got_lo12:cdecl(common_closure_bridge_handler)]
 #else
 ldr x17, 1f
 b 2f
@@ -99,8 +102,4 @@ ret
 .globl cdecl(closure_bridge_asm_end)
 cdecl(closure_bridge_asm_end):
 
-.data
-.align 8
-common_closure_bridge_handler_addr:
-.quad cdecl(common_closure_bridge_handler)
 #endif
