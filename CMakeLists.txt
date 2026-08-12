@@ -59,7 +59,7 @@ else ()
   set(compile_definitions "${compile_definitions} -DDOBBY_LOGGING_DISABLE")
 endif ()
 
-set(compile_definitions "${compile_definitions} -DBUILD_WITH_TRAMPOLINE_ASM")
+set(compile_definitions "${compile_definitions} -DBUILD_WITH_TRAMPOLINE_ASSEMBLER")
 
 if (CMAKE_GENERATOR STREQUAL Xcode)
 endif ()

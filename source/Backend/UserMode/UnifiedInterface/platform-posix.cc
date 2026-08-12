@@ -26,6 +26,15 @@
 #include "logging/check_logging.h"
 #include "PlatformUnifiedInterface/platform.h"
 
+namespace features::android {
+void make_memory_readable(void *address, size_t) {
+#if defined(ANDROID)
+  auto page = (void *)ALIGN_FLOOR(address, OSMemory::PageSize());
+  OSMemory::SetPermission(page, OSMemory::PageSize(), kReadExecute);
+#endif
+}
+} // namespace features::android
+
 #if defined(__APPLE__)
 #include <dlfcn.h>
 #include <mach/mach.h>

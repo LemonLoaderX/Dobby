@@ -38,8 +38,8 @@ ClosureTrampoline *GenerateClosureTrampoline(void *carry_data, void *carry_handl
   TurboAssembler turbo_assembler_;
 #define _ turbo_assembler_. // NOLINT: clang-tidy
 
-  auto closure_bridge_addr = (addr_t)get_closure_bridge_addr();
-  auto closure_bridge_data_label = _ createDataLabel(closure_bridge_addr);
+  auto closure_bridge_target = (addr_t)closure_bridge_addr;
+  auto closure_bridge_data_label = _ createDataLabel(closure_bridge_target);
 
   PseudoLabel entry_label;
 
@@ -62,11 +62,11 @@ ClosureTrampoline *GenerateClosureTrampoline(void *carry_data, void *carry_handl
   _ br(TMP_REG_0);
 
   _ bindLabel(&entry_label);
-  _ EmitInt64((uint64_t)tramp_entry);
+  _ EmitInt64((uint64_t)closure_tramp);
 
   _ relocDataLabels();
 
-  auto tramp_code_block =
+  auto tramp_block =
       AssemblerCodeBuilder::FinalizeFromTurboAssembler(static_cast<AssemblerBase *>(&turbo_assembler_));
 #endif
 
