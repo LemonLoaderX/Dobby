@@ -2,6 +2,7 @@
 .idea/
 *-build*/
 build-output/
+/dist/
 
 CMakeLists.txt.user
 CMakeCache.txt
