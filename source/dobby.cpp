@@ -47,6 +47,7 @@ PUBLIC uintptr_t placeholder() {
   x += (uintptr_t)&DobbyHook;
   x += (uintptr_t)&DobbyInstrument;
   x += (uintptr_t)&dobby_set_near_trampoline;
+  x += (uintptr_t)&dobby_set_near_trampoline_required;
   x += (uintptr_t)&common_closure_bridge_handler;
   x += (uintptr_t)&dobby_register_alloc_near_code_callback;
   return x;

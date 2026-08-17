@@ -19,7 +19,8 @@ struct InlineHookRouting : InterceptRouting {
   void BuildRouting() {
     __FUNC_CALL_TRACE__();
 
-    GenerateTrampoline();
+    if (!GenerateTrampoline())
+      return;
 
     GenerateRelocatedCode();
 
@@ -51,13 +52,21 @@ PUBLIC inline int DobbyHook(void *address, void *fake_func, void **out_origin_fu
 
   auto routing = new InlineHookRouting(entry, (addr_t)fake_func);
   routing->BuildRouting();
-  routing->Active();
-  entry->routing = routing;
-
   if (routing->error) {
     ERROR_LOG("build routing error.");
+    delete routing;
+    delete entry;
     return -1;
   }
+  routing->Active();
+  if (routing->error) {
+    ERROR_LOG("activate routing error.");
+    entry->restore_orig_code();
+    delete routing;
+    delete entry;
+    return -1;
+  }
+  entry->routing = routing;
 
   if (out_origin_func) {
     *out_origin_func = (void *)entry->relocated.addr();

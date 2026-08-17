@@ -141,6 +141,10 @@ int DobbyImportTableReplace(char *image_name, char *symbol_name, void *fake_func
 // for x86, x64, always use absolute indirect jump
 void dobby_set_near_trampoline(bool enable);
 
+// Require a near trampoline instead of falling back to a larger inline patch.
+// This is necessary when the target function is shorter than the normal patch.
+void dobby_set_near_trampoline_required(bool require);
+
 // register callback for alloc near code block
 typedef addr_t (*dobby_alloc_near_code_callback_t)(uint32_t size, addr_t pos, size_t range);
 void dobby_register_alloc_near_code_callback(dobby_alloc_near_code_callback_t handler);

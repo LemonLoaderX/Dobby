@@ -30,7 +30,8 @@ struct InstrumentRouting : InterceptRouting {
     __FUNC_CALL_TRACE__();
     GenerateInstrumentClosureTrampoline();
 
-    GenerateTrampoline();
+    if (!GenerateTrampoline())
+      return;
 
     GenerateRelocatedCode();
 
@@ -61,13 +62,21 @@ PUBLIC inline int DobbyInstrument(void *address, dobby_instrument_callback_t pre
 
   auto routing = new InstrumentRouting(entry, pre_handler);
   routing->BuildRouting();
-  routing->Active();
-  entry->routing = routing;
-
   if (routing->error) {
     ERROR_LOG("build routing error.");
+    delete routing;
+    delete entry;
     return -1;
   }
+  routing->Active();
+  if (routing->error) {
+    ERROR_LOG("activate routing error.");
+    entry->restore_orig_code();
+    delete routing;
+    delete entry;
+    return -1;
+  }
+  entry->routing = routing;
 
   gInterceptor.add(entry);
 

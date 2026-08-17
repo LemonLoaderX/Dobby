@@ -76,8 +76,18 @@ struct InterceptRouting {
       near_trampoline = GenerateNearTrampolineBuffer(from, to);
     }
 
+    if (!near_trampoline && g_require_near_trampoline) {
+      ERROR_LOG("required near trampoline allocation failed");
+      error = 1;
+      return false;
+    }
+
     if (!near_trampoline) {
       trampoline = GenerateNormalTrampolineBuffer(from, to);
+    }
+    if (!trampoline && !near_trampoline) {
+      error = 1;
+      return false;
     }
     return true;
   }
