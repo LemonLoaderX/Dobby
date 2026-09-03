@@ -1,10 +1,13 @@
 ## Dobby
 
-This LemonLoader fork publishes standalone Android ARM64 outputs with
+This maintenance branch publishes standalone Android ARM64 outputs with
 `./scripts/build-android.ps1 -Configuration Release`. The directory
 `dist/android-arm64/Release` contains `libdobby.so`, `libdobby.a`, and a hashed
-manifest. LemonLoader links the static target into `libmain.so`, so its release
-archive does not duplicate either Dobby artifact.
+manifest. Embedding projects can also link the `dobby_static` CMake target
+directly without distributing a separate Dobby library.
+
+The additional Android ARM64 fixes and their maintenance contract are described
+in [PATCHES.md](PATCHES.md).
 
 [![Contact me Telegram](https://img.shields.io/badge/Contact%20me-Telegram-blue.svg)](https://t.me/IOFramebuffer) [![Join group Telegram](https://img.shields.io/badge/Join%20group-Telegram-brightgreen.svg)](https://t.me/dobby_group)
 
