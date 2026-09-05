@@ -19,3 +19,17 @@ Closure trampoline register handling also follows the Android ARM64 ABI.
 
 Validate both successful hooks and forced near-allocation failure before
 updating consumers. A failed hook must not modify the target function.
+
+Android native bridges may expose translated ARM code as readable guest mappings
+and reserve the surrounding guest address space with anonymous `PROT_NONE`
+mappings. Near allocation recognizes that layout only when the hook target is
+readable but non-executable, then replaces one private anonymous reservation page
+with executable trampoline storage. Native ARM targets retain the conservative
+unmapped-gap allocator.
+
+Run the far-target hook and original-trampoline regression on an attached ARM64
+device or native-bridge emulator:
+
+```powershell
+./scripts/test-android-near-hook.ps1 -DeviceSerial <serial>
+```

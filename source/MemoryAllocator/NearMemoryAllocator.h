@@ -51,7 +51,7 @@ struct NearMemoryAllocator {
         return {addr, in_size};
     } else {
       auto search_range = MemRange(pos - range, range * 2);
-      return allocNearBlock(in_size, search_range, true);
+      return allocNearBlock(in_size, search_range, true, pos);
     }
     return {};
   }
@@ -61,7 +61,7 @@ struct NearMemoryAllocator {
     return allocNearBlock(in_size, search_range, false);
   }
 
-  MemBlock allocNearBlock(uint32_t in_size, MemRange search_range, bool is_exec = true) {
+  MemBlock allocNearBlock(uint32_t in_size, MemRange search_range, bool is_exec = true, addr_t anchor = 0) {
     // step-1: search from allocators first
     auto allocators = is_exec ? code_page_allocators : data_page_allocators;
     for (auto allocator : allocators) {
@@ -84,9 +84,52 @@ struct NearMemoryAllocator {
 
     // step-2: search from unused page between regions
     auto regions = ProcessRuntime::getMemoryLayout();
+
+#if defined(__ANDROID__)
+    // Native bridges can expose translated ARM code as readable, non-executable
+    // guest mappings while reserving the surrounding guest address space with
+    // anonymous PROT_NONE mappings. Reuse one page only when the hook target is
+    // itself such translated code; native ARM processes keep the conservative
+    // unmapped-gap path below.
+    bool translated_code = false;
+    if (is_exec && anchor) {
+      for (const auto &region : regions) {
+        if (anchor >= region.start() && anchor < region.end()) {
+          translated_code = (region.perm & MEM_PERM_R) && !(region.perm & MEM_PERM_X);
+          break;
+        }
+      }
+    }
+    if (translated_code) {
+      const size_t page_size = OSMemory::PageSize();
+      for (const auto &region : regions) {
+        if (region.perm != kNoAccess || !region.is_private || region.has_path)
+          continue;
+
+        auto intersect = search_range.intersect(region);
+        auto page_addr = ALIGN_CEIL(intersect.addr(), page_size);
+        if (intersect.size < page_size || page_addr + page_size > intersect.end())
+          continue;
+
+        auto page = OSMemory::Allocate(page_size, kNoAccess, (void *)page_addr);
+        if (page != (void *)page_addr)
+          continue;
+        if (!OSMemory::SetPermission(page, page_size, kReadExecute)) {
+          OSMemory::Free(page, page_size);
+          continue;
+        }
+
+        DEBUG_LOG("step-2 translated reservation: %p", page);
+        auto page_allocator = new simple_linear_allocator_t((uint8_t *)page, page_size);
+        code_page_allocators.push_back(page_allocator);
+        auto result = page_allocator->alloc(in_size);
+        return {(addr_t)result, (size_t)in_size};
+      }
+    }
+#endif
+
     for (int i = 0; i < regions.size(); ++i) {
       auto *region = &regions[i];
-      auto *prev_region = i > 0 ? &regions[i - 1] : nullptr;
       auto *next_region = i < regions.size() - 1 ? &regions[i + 1] : nullptr;
       if (!next_region)
         break;
@@ -95,25 +138,27 @@ struct NearMemoryAllocator {
       auto unused_region_size = next_region->addr() - region->end();
       MemRegion unused_region(unused_region_start, unused_region_size, kNoAccess);
       auto intersect = search_range.intersect(unused_region);
-      if (intersect.size < in_size)
+      const size_t page_size = OSMemory::PageSize();
+      auto unused_page = ALIGN_CEIL(intersect.addr(), page_size);
+      if (intersect.size < page_size || unused_page + page_size > intersect.end())
         continue;
 
-      auto unused_page = (void *)ALIGN_FLOOR(intersect.addr(), OSMemory::PageSize());
-      {
-        auto page = OSMemory::Allocate(OSMemory::PageSize(), kNoAccess, unused_page);
-        if (page != unused_page) {
-          FATAL_LOG("allocate unused page failed");
-        }
-        OSMemory::SetPermission(unused_page, OSMemory::PageSize(), is_exec ? kReadExecute : kReadWrite);
-        DEBUG_LOG("step-2 unused page: %p", unused_page);
-        auto page_allocator = new simple_linear_allocator_t((uint8_t *)unused_page, OSMemory::PageSize());
-        if (is_exec)
-          code_page_allocators.push_back(page_allocator);
-        else
-          data_page_allocators.push_back(page_allocator);
+      auto page = OSMemory::Allocate(page_size, kNoAccess, (void *)unused_page);
+      if (page != (void *)unused_page)
+        continue;
+      if (!OSMemory::SetPermission(page, page_size, is_exec ? kReadExecute : kReadWrite)) {
+        OSMemory::Free(page, page_size);
+        continue;
       }
-      // should be fallthrough to step-1 allocator
-      return allocNearBlock(in_size, search_range, is_exec);
+
+      DEBUG_LOG("step-2 unused page: %p", page);
+      auto page_allocator = new simple_linear_allocator_t((uint8_t *)page, page_size);
+      if (is_exec)
+        code_page_allocators.push_back(page_allocator);
+      else
+        data_page_allocators.push_back(page_allocator);
+      auto result = page_allocator->alloc(in_size);
+      return {(addr_t)result, (size_t)in_size};
     }
 
     // step-3 for exec only

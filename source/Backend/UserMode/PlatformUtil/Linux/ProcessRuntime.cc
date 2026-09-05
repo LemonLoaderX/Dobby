@@ -11,7 +11,7 @@
 #include <vector>
 #include <algorithm>
 
-#define LINE_MAX 2048
+constexpr size_t kProcMapsLineBufferSize = 2048;
 
 static bool memory_region_comparator(MemRange a, MemRange b) {
   return (a.start() < b.start());
@@ -25,12 +25,13 @@ const stl::vector<MemRegion> &ProcessRuntime::getMemoryLayout() {
   if (fp == nullptr)
     return regions;
 
-  while (!feof(fp)) {
-    char line_buffer[LINE_MAX + 1];
-    fgets(line_buffer, LINE_MAX, fp);
+  while (true) {
+    char line_buffer[kProcMapsLineBufferSize];
+    if (fgets(line_buffer, sizeof(line_buffer), fp) == nullptr)
+      break;
 
     // ignore the rest of characters
-    if (strlen(line_buffer) == LINE_MAX && line_buffer[LINE_MAX] != '\n') {
+    if (strchr(line_buffer, '\n') == nullptr && !feof(fp)) {
       // Entry not describing executable data. Skip to end of line to set up
       // reading the next entry.
       int c;
@@ -67,22 +68,26 @@ const stl::vector<MemRegion> &ProcessRuntime::getMemoryLayout() {
       return regions;
     }
 
-    MemoryPermission permission;
-    if (permissions[0] == 'r' && permissions[1] == 'w') {
-      permission = MemoryPermission::kReadWrite;
-    } else if (permissions[0] == 'r' && permissions[2] == 'x') {
-      permission = MemoryPermission::kReadExecute;
-    } else if (permissions[0] == 'r' && permissions[1] == 'w' && permissions[2] == 'x') {
-      permission = MemoryPermission::kReadWriteExecute;
-    } else {
-      permission = MemoryPermission::kNoAccess;
-    }
+    int permission = MemoryPermission::kNoAccess;
+    if (permissions[0] == 'r')
+      permission |= MemoryPermission::kRead;
+    if (permissions[1] == 'w')
+      permission |= MemoryPermission::kWrite;
+    if (permissions[2] == 'x')
+      permission |= MemoryPermission::kExecute;
+
+    const char *path = line_buffer + path_index;
+    while (*path == ' ' || *path == '\t')
+      ++path;
+    const bool has_path = *path != '\0' && *path != '\r' && *path != '\n';
+    const bool is_private = permissions[3] == 'p';
 
 #if 0
       DEBUG_LOG("%p --- %p", region_start, region_end);
 #endif
 
-    MemRegion region = MemRegion(region_start, region_end - region_start, permission);
+    MemRegion region = MemRegion(
+        region_start, region_end - region_start, permission, is_private, has_path);
     regions.push_back(region);
   }
   std::sort(regions.begin(), regions.end(), memory_region_comparator);

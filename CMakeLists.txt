@@ -32,6 +32,8 @@ option(DOBBY_BUILD_EXAMPLE "Build example" OFF)
 
 option(DOBBY_BUILD_TEST "Build test" OFF)
 
+option(DOBBY_BUILD_ANDROID_NEAR_HOOK_TEST "Build the standalone Android near-hook test" OFF)
+
 # --- private
 option(DOBBY_BUILD_KERNEL_MODE "Build xnu kernel mode" OFF)
 
@@ -75,6 +77,7 @@ message(STATUS "[Dobby] Plugin.ImportTableReplace: ${Plugin.ImportTableReplace}"
 message(STATUS "[Dobby] Plugin.Android.BionicLinkerUtil: ${Plugin.Android.BionicLinkerUtil}")
 message(STATUS "[Dobby] DOBBY_BUILD_EXAMPLE: ${DOBBY_BUILD_EXAMPLE}")
 message(STATUS "[Dobby] DOBBY_BUILD_TEST: ${DOBBY_BUILD_TEST}")
+message(STATUS "[Dobby] DOBBY_BUILD_ANDROID_NEAR_HOOK_TEST: ${DOBBY_BUILD_ANDROID_NEAR_HOOK_TEST}")
 message(STATUS "[Dobby] DOBBY_BUILD_KERNEL_MODE: ${DOBBY_BUILD_KERNEL_MODE}")
 message(STATUS "[Dobby] Private.Obfuscation: ${Private.Obfuscation}")
 
@@ -366,6 +369,16 @@ endif ()
 
 if (DOBBY_BUILD_TEST AND (NOT DOBBY_BUILD_KERNEL_MODE))
   add_subdirectory(tests)
+endif ()
+
+if (DOBBY_BUILD_ANDROID_NEAR_HOOK_TEST)
+  if (NOT SYSTEM.Android OR NOT CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
+    message(FATAL_ERROR "DOBBY_BUILD_ANDROID_NEAR_HOOK_TEST requires Android ARM64")
+  endif ()
+  add_executable(dobby_android_near_hook_test
+    tests/android_near_hook_test.cpp)
+  target_link_libraries(dobby_android_near_hook_test
+    dobby_static log dl)
 endif ()
 
 # ---
