@@ -27,8 +27,8 @@ readable but non-executable, then replaces one private anonymous reservation pag
 with executable trampoline storage. Native ARM targets retain the conservative
 unmapped-gap allocator.
 
-Run the far-target hook and original-trampoline regression on an attached ARM64
-device or native-bridge emulator:
+Run the native and synthetic translated-reservation hook regressions on an
+attached ARM64 device or native-bridge emulator:
 
 ```powershell
 ./scripts/test-android-near-hook.ps1 -DeviceSerial <serial>

@@ -11,10 +11,13 @@ __attribute__((noinline)) static int hook_target() {
   return 7;
 }
 
+__attribute__((noinline)) static int replacement_target() {
+  return 42;
+}
+
 int main() {
   const size_t page_size = static_cast<size_t>(sysconf(_SC_PAGESIZE));
-  void *replacement = mmap(nullptr, page_size, PROT_READ | PROT_WRITE,
-                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  void *replacement = mmap(nullptr, page_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (replacement == MAP_FAILED) {
     std::fprintf(stderr, "replacement mmap failed: %s\n", std::strerror(errno));
     return 1;
@@ -35,9 +38,8 @@ int main() {
   void *target = reinterpret_cast<void *>(&hook_target);
   const uintptr_t target_address = reinterpret_cast<uintptr_t>(target);
   const uintptr_t replacement_address = reinterpret_cast<uintptr_t>(replacement);
-  const uintptr_t distance = target_address > replacement_address
-                                 ? target_address - replacement_address
-                                 : replacement_address - target_address;
+  const uintptr_t distance = target_address > replacement_address ? target_address - replacement_address
+                                                                  : replacement_address - target_address;
   if (distance < (128uLL * 1024u * 1024u)) {
     std::fprintf(stderr, "replacement is not far enough to exercise near allocation\n");
     return 3;
@@ -64,6 +66,64 @@ int main() {
   }
 
   munmap(replacement, page_size);
+
+  const size_t reservation_size = page_size * 3;
+  void *reservation = mmap(nullptr, reservation_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (reservation == MAP_FAILED) {
+    std::fprintf(stderr, "translated reservation mmap failed: %s\n", std::strerror(errno));
+    return 7;
+  }
+
+  void *translated_target = static_cast<char *>(reservation) + page_size;
+  if (mprotect(translated_target, page_size, PROT_READ | PROT_WRITE) != 0) {
+    std::fprintf(stderr, "translated target mprotect failed: %s\n", std::strerror(errno));
+    return 8;
+  }
+  const uint32_t target_code[] = {
+      0x528000e0u, // mov w0, #7
+      0xd65f03c0u, // ret
+  };
+  std::memcpy(translated_target, target_code, sizeof(target_code));
+  __builtin___clear_cache(static_cast<char *>(translated_target),
+                          static_cast<char *>(translated_target) + sizeof(target_code));
+  if (mprotect(translated_target, page_size, PROT_READ) != 0) {
+    std::fprintf(stderr, "translated target read-only mprotect failed: %s\n", std::strerror(errno));
+    return 9;
+  }
+
+  const uintptr_t translated_address = reinterpret_cast<uintptr_t>(translated_target);
+  const uintptr_t compiled_replacement = reinterpret_cast<uintptr_t>(&replacement_target);
+  const uintptr_t translated_distance = translated_address > compiled_replacement
+                                            ? translated_address - compiled_replacement
+                                            : compiled_replacement - translated_address;
+  if (translated_distance < (128uLL * 1024u * 1024u)) {
+    std::fprintf(stderr, "translated target is not far enough to require a near trampoline\n");
+    return 10;
+  }
+
+  void *translated_original = nullptr;
+  const int translated_status =
+      DobbyHook(translated_target, reinterpret_cast<void *>(&replacement_target), &translated_original);
+  if (translated_status != 0 || translated_original == nullptr) {
+    std::fprintf(stderr, "translated reservation hook failed with status %d\n", translated_status);
+    return 11;
+  }
+  if (mprotect(translated_target, page_size, PROT_READ | PROT_EXEC) != 0) {
+    std::fprintf(stderr, "translated target executable mprotect failed: %s\n", std::strerror(errno));
+    return 12;
+  }
+
+  auto translated_function = reinterpret_cast<int (*)()>(translated_target);
+  auto translated_original_function = reinterpret_cast<int (*)()>(translated_original);
+  if (translated_function() != 42 || translated_original_function() != 7) {
+    std::fprintf(stderr, "translated hook or original trampoline returned an unexpected value\n");
+    return 13;
+  }
+  if (DobbyDestroy(translated_target) != 0 || translated_function() != 7) {
+    std::fprintf(stderr, "translated hook restoration failed\n");
+    return 14;
+  }
+
   std::puts("Dobby Android near-hook test passed");
   return 0;
 }
