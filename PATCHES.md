@@ -33,3 +33,13 @@ attached ARM64 device or native-bridge emulator:
 ```powershell
 ./scripts/test-android-near-hook.ps1 -DeviceSerial <serial>
 ```
+
+## POSIX code-page permissions
+
+Code patching preserves each touched page's existing read/write access while
+publishing executable code. It does not force shared malloc pages to read-only,
+which can crash unrelated runtime data writes. Readable mappings are collected
+before mutation; preparation failures leave instructions unchanged. Execute
+access remains explicit for native bridges whose maps view hides guest execution.
+The same Android regression covers multiple pages, shared writes, exact boundaries
+and unreadable-neighbor rejection. Concurrent patching still requires coordination.

@@ -1,11 +1,74 @@
 #include "dobby.h"
 
 #include <cerrno>
+#include <cinttypes>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <vector>
+
+static int page_protection(void *address) {
+  FILE *maps = std::fopen("/proc/self/maps", "r");
+  if (!maps) return -1;
+  char line[1024];
+  while (std::fgets(line, sizeof(line), maps)) {
+    uintptr_t start, end;
+    char permissions[5];
+    if (std::sscanf(line, "%" SCNxPTR "-%" SCNxPTR " %4s", &start, &end, permissions) == 3 &&
+        reinterpret_cast<uintptr_t>(address) >= start && reinterpret_cast<uintptr_t>(address) < end) {
+      std::fclose(maps);
+      return (permissions[0] == 'r' ? PROT_READ : 0) | (permissions[1] == 'w' ? PROT_WRITE : 0) |
+             (permissions[2] == 'x' ? PROT_EXEC : 0);
+    }
+  }
+  std::fclose(maps);
+  return -1;
+}
+
+static int test_patch_permissions(size_t page_size) {
+  auto *pages = static_cast<uint8_t *>(mmap(nullptr, page_size * 3, PROT_READ | PROT_WRITE,
+                                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+  if (pages == MAP_FAILED) return 20;
+  const uint8_t patch[] = {1, 2, 3, 4};
+  if (mprotect(pages + page_size, page_size, PROT_READ | PROT_WRITE | PROT_EXEC) != 0 ||
+      mprotect(pages + page_size * 2, page_size, PROT_READ) != 0) return 21;
+  // Native bridges can omit guest execute permission from the host maps view.
+  const int data_permissions = PROT_READ | PROT_WRITE;
+  if (DobbyCodePatch(pages, const_cast<uint8_t *>(patch), sizeof(patch)) != 0 ||
+      (page_protection(pages) & data_permissions) != data_permissions) {
+    std::fputs("CodePatch removed write permission from a shared data page\n", stderr);
+    return 22;
+  }
+  if (DobbyCodePatch(pages + page_size - 2, const_cast<uint8_t *>(patch), sizeof(patch)) != 0 ||
+      (page_protection(pages) & data_permissions) != data_permissions ||
+      (page_protection(pages + page_size) & data_permissions) != data_permissions) {
+    std::fprintf(stderr, "Cross-page data/code protection mismatch: %d/%d\n",
+                 page_protection(pages), page_protection(pages + page_size));
+    return 23;
+  }
+  if (DobbyCodePatch(pages + page_size * 2 - 2, const_cast<uint8_t *>(patch), sizeof(patch)) != 0 ||
+      (page_protection(pages + page_size) & data_permissions) != data_permissions ||
+      (page_protection(pages + page_size * 2) & data_permissions) != PROT_READ) return 24;
+  std::vector<uint8_t> large_patch(page_size * 2 + 4, 0x5a);
+  if (DobbyCodePatch(pages, large_patch.data(), large_patch.size()) != 0 ||
+      std::memcmp(pages, large_patch.data(), large_patch.size()) != 0 ||
+      (page_protection(pages) & data_permissions) != data_permissions ||
+      (page_protection(pages + page_size) & data_permissions) != data_permissions ||
+      (page_protection(pages + page_size * 2) & data_permissions) != PROT_READ) return 28;
+  if (mprotect(pages + page_size * 2, page_size, PROT_NONE) != 0) return 25;
+  uint8_t original[2];
+  std::memcpy(original, pages + page_size * 2 - 2, sizeof(original));
+  if (DobbyCodePatch(pages + page_size * 2 - 2, const_cast<uint8_t *>(patch), sizeof(patch)) == 0 ||
+      std::memcmp(original, pages + page_size * 2 - 2, sizeof(original)) != 0 ||
+      page_protection(pages + page_size * 2) != PROT_NONE) return 26;
+  if (DobbyCodePatch(pages + page_size * 2 - sizeof(patch), const_cast<uint8_t *>(patch), sizeof(patch)) != 0)
+    return 27; // An exact page boundary must not touch the next unreadable page.
+  pages[64] = 42;
+  munmap(pages, page_size * 3);
+  return 0;
+}
 
 __attribute__((noinline)) static int hook_target() {
   return 7;
@@ -17,6 +80,8 @@ __attribute__((noinline)) static int replacement_target() {
 
 int main() {
   const size_t page_size = static_cast<size_t>(sysconf(_SC_PAGESIZE));
+  const int permission_status = test_patch_permissions(page_size);
+  if (permission_status != 0) return permission_status;
   void *replacement = mmap(nullptr, page_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (replacement == MAP_FAILED) {
     std::fprintf(stderr, "replacement mmap failed: %s\n", std::strerror(errno));
