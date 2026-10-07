@@ -145,6 +145,12 @@ void dobby_set_near_trampoline(bool enable);
 // This is necessary when the target function is shorter than the normal patch.
 void dobby_set_near_trampoline_required(bool require);
 
+// Reserve allocator-owned ARM64 relay storage before the address space fills.
+// Leaves at least one 16-byte relay available at return; does not modify the target.
+// Capacity is shared with subsequent hooks, not exclusive to this target. Like hook
+// installation, callers must serialize access. Returns -1 if capacity is unavailable.
+int dobby_reserve_near_trampoline(void *target);
+
 // register callback for alloc near code block
 typedef addr_t (*dobby_alloc_near_code_callback_t)(uint32_t size, addr_t pos, size_t range);
 void dobby_register_alloc_near_code_callback(dobby_alloc_near_code_callback_t handler);

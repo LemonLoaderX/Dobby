@@ -17,18 +17,31 @@ relay cannot be allocated. Embedders can require near trampolines explicitly;
 failure then leaves the original instructions unchanged and returns an error.
 Closure trampoline register handling also follows the Android ARM64 ABI.
 
+Near allocation uses owned allocator pages or explicitly acquired mappings. It
+never treats zero bytes in an existing executable mapping as free storage: those
+bytes can belong to live runtime data or code. Exhaustion returns failure rather
+than overwriting another owner's memory. Custom allocation callbacks still own
+their storage and lifetime contract.
+
+Ordinary POSIX exact-address allocation never replaces an existing mapping. It
+uses an address hint and rejects a different returned address, including on older
+Android kernels. Anonymous private `PROT_NONE` mappings remain owned by their
+original allocator; a readable, non-executable target cannot authorize replacement.
+Gap pages are selected nearest the hook anchor. Embedders can call
+`dobby_reserve_near_trampoline` before other runtimes fill the address space; it
+leaves at least 16 bytes of owned capacity available without patching the target or
+consuming a relay. Repeated requests reuse available capacity. Other hooks may
+consume it, so this is preparation, not an exclusive target reservation or proof
+that a later hook can succeed. Callers serialize reservation and hook installation.
+Reservation and hook generation share one inline allocator across translation
+units; internal static copies cannot share ownership or free-space accounting.
+
 Validate both successful hooks and forced near-allocation failure before
 updating consumers. A failed hook must not modify the target function.
 
-Android native bridges may expose translated ARM code as readable guest mappings
-and reserve the surrounding guest address space with anonymous `PROT_NONE`
-mappings. Near allocation recognizes that layout only when the hook target is
-readable but non-executable, then replaces one private anonymous reservation page
-with executable trampoline storage. Native ARM targets retain the conservative
-unmapped-gap allocator.
-
-Run the native and synthetic translated-reservation hook regressions on an
-attached ARM64 device or native-bridge emulator:
+Run the regression on an attached ARM64 device. It covers hook/original/undo,
+nearest gaps, cross-translation-unit sharing, repeated reservation with only one
+relay left, exhaustion, live zero-filled mappings and foreign `PROT_NONE` sentinels:
 
 ```powershell
 ./scripts/test-android-near-hook.ps1 -DeviceSerial <serial>

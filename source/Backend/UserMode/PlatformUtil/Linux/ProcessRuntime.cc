@@ -48,21 +48,16 @@ const stl::vector<MemRegion> &ProcessRuntime::getMemoryLayout() {
     uint8_t dev_major = 0;
     uint8_t dev_minor = 0;
     long inode = 0;
-    int path_index = 0;
 
     // Sample format from man 5 proc:
     //
     // address           perms offset  dev   inode   pathname
     // 08048000-08056000 r-xp 00000000 03:0c 64593   /usr/sbin/gpm
     //
-    // The final %n term captures the offset in the input string, which is used
-    // to determine the path name. It *does not* increment the return value.
-    // Refer to man 3 sscanf for details.
     if (sscanf(line_buffer,
                "%" PRIxPTR "-%" PRIxPTR " %4c "
-               "%" PRIxPTR " %hhx:%hhx %ld %n",
-               &region_start, &region_end, permissions, &region_offset, &dev_major, &dev_minor, &inode,
-               &path_index) < 7) {
+               "%" PRIxPTR " %hhx:%hhx %ld",
+               &region_start, &region_end, permissions, &region_offset, &dev_major, &dev_minor, &inode) < 7) {
       ERROR_LOG("/proc/self/maps parse failed!");
       fclose(fp);
       return regions;
@@ -76,18 +71,11 @@ const stl::vector<MemRegion> &ProcessRuntime::getMemoryLayout() {
     if (permissions[2] == 'x')
       permission |= MemoryPermission::kExecute;
 
-    const char *path = line_buffer + path_index;
-    while (*path == ' ' || *path == '\t')
-      ++path;
-    const bool has_path = *path != '\0' && *path != '\r' && *path != '\n';
-    const bool is_private = permissions[3] == 'p';
-
 #if 0
       DEBUG_LOG("%p --- %p", region_start, region_end);
 #endif
 
-    MemRegion region = MemRegion(
-        region_start, region_end - region_start, permission, is_private, has_path);
+    MemRegion region = MemRegion(region_start, region_end - region_start, permission);
     regions.push_back(region);
   }
   std::sort(regions.begin(), regions.end(), memory_region_comparator);

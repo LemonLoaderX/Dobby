@@ -37,6 +37,18 @@ PUBLIC int DobbyDestroy(void *address) {
   return -1;
 }
 
+PUBLIC int dobby_reserve_near_trampoline(void *target) {
+#if defined(TARGET_ARCH_ARM64)
+  constexpr size_t range = 128uLL * 1024u * 1024u;
+  const auto anchor = reinterpret_cast<addr_t>(target);
+  if (anchor < range || anchor > UINTPTR_MAX - range)
+    return -1;
+  return gNearMemoryAllocator.reserveNearCode(16, MemRange(anchor - range, range * 2), anchor) ? 0 : -1;
+#else
+  return -1;
+#endif
+}
+
 PUBLIC void dobby_set_options(bool enable_near_trampoline, dobby_alloc_near_code_callback_t alloc_near_code_callback) {
   dobby_set_near_trampoline(enable_near_trampoline);
   dobby_register_alloc_near_code_callback(alloc_near_code_callback);

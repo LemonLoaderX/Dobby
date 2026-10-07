@@ -47,5 +47,5 @@ an error; it cannot promise that the original code remains installed.
 
 ## Prior-note Audit
 
-There are no existing agent notes in this fork. PATCHES.md owns the separate
-near-allocation and translated-reservation rules; those rules remain unchanged.
+The [owned near-capacity note](2026-10-07-owned-near-capacity.md) owns rejection of
+unowned zero-filled and PROT_NONE storage, separately from page permissions.

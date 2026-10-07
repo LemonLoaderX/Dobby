@@ -141,12 +141,14 @@ void *OSMemory::Allocate(size_t size, MemoryPermission access, void *fixed_addre
   int prot = GetProtectionFromMemoryPermission(access);
 
   int flags = MAP_PRIVATE | MAP_ANONYMOUS;
-  if (fixed_address != nullptr) {
-    flags = flags | MAP_FIXED;
-  }
   void *result = mmap(fixed_address, size, prot, flags, kMmapFd, kMmapFdOffset);
   if (result == MAP_FAILED)
     return nullptr;
+
+  if (fixed_address && result != fixed_address) {
+    munmap(result, size);
+    return nullptr;
+  }
 
   return result;
 }

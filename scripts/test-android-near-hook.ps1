@@ -68,7 +68,7 @@ $testExecutable = Get-ChildItem -LiteralPath $buildRoot -File -Recurse |
     Select-Object -First 1
 if (-not $testExecutable) { throw "The Android near-hook test executable was not found." }
 
-$remotePath = "/data/local/tmp/dobby_android_near_hook_test"
+$remotePath = "/data/local/tmp/dobby-near-hook-$([guid]::NewGuid().ToString('N'))"
 try {
     & $adb -s $DeviceSerial push $testExecutable.FullName $remotePath | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Pushing the Android near-hook test failed." }

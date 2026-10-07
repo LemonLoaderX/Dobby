@@ -3,34 +3,12 @@
 #include "dobby/common.h"
 #include "MemoryAllocator.h"
 #include "PlatformUtil/ProcessRuntime.h"
+#include <algorithm>
 #include <stdint.h>
 
 #define KB (1024uLL)
 #define MB (1024uLL * KB)
 #define GB (1024uLL * MB)
-
-// memmem impl
-inline void *memmem_impl(const void *haystack, size_t haystacklen, const void *needle, size_t needlelen) {
-  if (!haystack || !needle) {
-    return (void *)haystack;
-  } else {
-    const char *h = (const char *)haystack;
-    const char *n = (const char *)needle;
-    size_t l = needlelen;
-    const char *r = h;
-    while (l && (l <= haystacklen)) {
-      if (*n++ != *h++) {
-        r = h;
-        n = (const char *)needle;
-        l = needlelen;
-      } else {
-        --l;
-      }
-      --haystacklen;
-    }
-    return l ? nullptr : (void *)r;
-  }
-}
 
 inline dobby_alloc_near_code_callback_t custom_alloc_near_code_handler = nullptr;
 PUBLIC inline void dobby_register_alloc_near_code_callback(dobby_alloc_near_code_callback_t handler) {
@@ -62,8 +40,23 @@ struct NearMemoryAllocator {
   }
 
   MemBlock allocNearBlock(uint32_t in_size, MemRange search_range, bool is_exec = true, addr_t anchor = 0) {
+    auto allocator = ensureNearCapacity(in_size, search_range, is_exec, anchor);
+    if (!allocator)
+      return {};
+    return {(addr_t)allocator->alloc(in_size), (size_t)in_size};
+  }
+
+  // Leaves in_size bytes available for the next allocation; does not consume a relay.
+  bool reserveNearCode(uint32_t in_size, MemRange search_range, addr_t anchor) {
+    return ensureNearCapacity(in_size, search_range, true, anchor) != nullptr;
+  }
+
+private:
+  simple_linear_allocator_t *ensureNearCapacity(uint32_t in_size, MemRange search_range, bool is_exec, addr_t anchor) {
+    if (in_size == 0 || in_size > OSMemory::PageSize())
+      return nullptr;
     // step-1: search from allocators first
-    auto allocators = is_exec ? code_page_allocators : data_page_allocators;
+    const auto &allocators = is_exec ? code_page_allocators : data_page_allocators;
     for (auto allocator : allocators) {
       auto cursor = allocator->cursor();
       auto unused_size = allocator->capacity - allocator->size;
@@ -77,57 +70,14 @@ struct NearMemoryAllocator {
         allocator->alloc(gap_size);
       }
 
-      auto result = allocator->alloc(in_size);
-      DEBUG_LOG("step-1 allocator: %p, size: %d", (void *)result, in_size);
-      return {(addr_t)result, (size_t)in_size};
+      return allocator;
     }
 
     // step-2: search from unused page between regions
     auto regions = ProcessRuntime::getMemoryLayout();
 
-#if defined(__ANDROID__)
-    // Native bridges can expose translated ARM code as readable, non-executable
-    // guest mappings while reserving the surrounding guest address space with
-    // anonymous PROT_NONE mappings. Reuse one page only when the hook target is
-    // itself such translated code; native ARM processes keep the conservative
-    // unmapped-gap path below.
-    bool translated_code = false;
-    if (is_exec && anchor) {
-      for (const auto &region : regions) {
-        if (anchor >= region.start() && anchor < region.end()) {
-          translated_code = (region.perm & MEM_PERM_R) && !(region.perm & MEM_PERM_X);
-          break;
-        }
-      }
-    }
-    if (translated_code) {
-      const size_t page_size = OSMemory::PageSize();
-      for (const auto &region : regions) {
-        if (region.perm != kNoAccess || !region.is_private || region.has_path)
-          continue;
-
-        auto intersect = search_range.intersect(region);
-        auto page_addr = ALIGN_CEIL(intersect.addr(), page_size);
-        if (intersect.size < page_size || page_addr + page_size > intersect.end())
-          continue;
-
-        auto page = OSMemory::Allocate(page_size, kNoAccess, (void *)page_addr);
-        if (page != (void *)page_addr)
-          continue;
-        if (!OSMemory::SetPermission(page, page_size, kReadExecute)) {
-          OSMemory::Free(page, page_size);
-          continue;
-        }
-
-        DEBUG_LOG("step-2 translated reservation: %p", page);
-        auto page_allocator = new simple_linear_allocator_t((uint8_t *)page, page_size);
-        code_page_allocators.push_back(page_allocator);
-        auto result = page_allocator->alloc(in_size);
-        return {(addr_t)result, (size_t)in_size};
-      }
-    }
-#endif
-
+    stl::vector<addr_t> candidates;
+    const size_t page_size = OSMemory::PageSize();
     for (int i = 0; i < regions.size(); ++i) {
       auto *region = &regions[i];
       auto *next_region = i < regions.size() - 1 ? &regions[i + 1] : nullptr;
@@ -138,11 +88,20 @@ struct NearMemoryAllocator {
       auto unused_region_size = next_region->addr() - region->end();
       MemRegion unused_region(unused_region_start, unused_region_size, kNoAccess);
       auto intersect = search_range.intersect(unused_region);
-      const size_t page_size = OSMemory::PageSize();
       auto unused_page = ALIGN_CEIL(intersect.addr(), page_size);
       if (intersect.size < page_size || unused_page + page_size > intersect.end())
         continue;
 
+      const auto last_page = ALIGN_FLOOR(intersect.end() - page_size, page_size);
+      if (anchor)
+        unused_page = std::min(std::max((addr_t)ALIGN_FLOOR(anchor, page_size), unused_page), last_page);
+      candidates.push_back(unused_page);
+    }
+    std::sort(candidates.begin(), candidates.end(), [anchor](addr_t left, addr_t right) {
+      return (left > anchor ? left - anchor : anchor - left) <
+             (right > anchor ? right - anchor : anchor - right);
+    });
+    for (auto unused_page : candidates) {
       auto page = OSMemory::Allocate(page_size, kNoAccess, (void *)unused_page);
       if (page != (void *)unused_page)
         continue;
@@ -157,44 +116,15 @@ struct NearMemoryAllocator {
         code_page_allocators.push_back(page_allocator);
       else
         data_page_allocators.push_back(page_allocator);
-      auto result = page_allocator->alloc(in_size);
-      return {(addr_t)result, (size_t)in_size};
+      return page_allocator;
     }
 
-    // step-3 for exec only
-    if (!is_exec) {
-      return {};
-    }
-
-    // step-3: search unused code gap in regions
-    const uint8_t invalid_code_seq[0x1000] = {0};
-    for (int i = 0; i < regions.size(); ++i) {
-      auto *region = &regions[i];
-      if (!(region->perm & MEM_PERM_X))
-        continue;
-
-      auto intersect = search_range.intersect(*region);
-      if (intersect.size < in_size)
-        continue;
-
-      auto search_start = intersect.addr();
-      auto search_size = intersect.size;
-
-      auto alignmemt = 4;
-      auto unused_code_gap =
-          memmem_impl((void *)search_start, search_size, invalid_code_seq, in_size + (alignmemt - 1));
-      if (!unused_code_gap)
-        continue;
-      unused_code_gap = (void *)ALIGN_CEIL(unused_code_gap, alignmemt);
-      DEBUG_LOG("step-3 unused code gap: %p, size: %d", unused_code_gap, in_size);
-      return {(addr_t)unused_code_gap, (size_t)in_size};
-    }
-
+    // Zero bytes in an existing mapping do not establish ownership or free space.
     return {};
   }
 };
 
-inline static NearMemoryAllocator gNearMemoryAllocator;
+inline NearMemoryAllocator gNearMemoryAllocator;
 NearMemoryAllocator *NearMemoryAllocator::Shared() {
   return &gNearMemoryAllocator;
 }
