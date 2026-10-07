@@ -20,9 +20,16 @@ written until every touched page is ready. Range checks use the last patched byt
 so an exact page boundary does not affect the next page.
 
 Execute access must remain explicit: Android native bridges can expose guest
-executable code as a non-executable host mapping in /proc/self/maps. The native and
-translated-reservation hook tests exercise that boundary. The patcher does not
+executable code as a non-executable host mapping in /proc/self/maps. The permission
+fixture checks publication from readable non-executable pages. The patcher does not
 create a new allocator or change caller-owned pointer lifetimes.
+
+Android hook preparation observes the target mapping before requesting readability.
+Preparation requests read and execute access while retaining existing writes.
+Native bridges need guest execute permission before trampoline relocation; their
+host maps may still omit it. Already readable executable pages are unchanged.
+This prevents preparation from revoking shared writes before the patcher can
+observe their original state.
 
 ## Alternatives considered
 
@@ -39,6 +46,9 @@ Each patch reads /proc/self/maps and temporarily stores one entry per touched pa
 Unreadable or unmapped ranges fail before modification. The executable fixture
 checks shared data writes, differing permissions across multiple pages, exact-end
 boundaries, rejection of an unreadable neighbor, hook invocation and undo.
+The shared-page hook fixture exercises the complete DobbyHook path, checks writes
+beside its code and verifies both the original trampoline and restoration. Testing
+only DobbyCodePatch cannot cover a permission change earlier in hook preparation.
 
 This does not serialize concurrent page-permission changes or guarantee atomic
 instruction publication during concurrent execution. Existing consumers still

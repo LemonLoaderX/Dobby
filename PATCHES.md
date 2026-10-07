@@ -56,3 +56,6 @@ before mutation; preparation failures leave instructions unchanged. Execute
 access remains explicit for native bridges whose maps view hides guest execution.
 The same Android regression covers multiple pages, shared writes, exact boundaries
 and unreadable-neighbor rejection. Concurrent patching still requires coordination.
+Android hook preparation also preserves the target page's writes while requesting
+read/execute access for native-bridge relocation. The shared-page hook fixture covers
+preparation, publication, original invocation and restoration together.

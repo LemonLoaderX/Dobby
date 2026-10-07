@@ -29,8 +29,27 @@
 namespace features::android {
 void make_memory_readable(void *address, size_t) {
 #if defined(ANDROID)
-  auto page = (void *)ALIGN_FLOOR(address, OSMemory::PageSize());
-  OSMemory::SetPermission(page, OSMemory::PageSize(), kReadExecute);
+  FILE *maps = fopen("/proc/self/maps", "r");
+  if (!maps)
+    return;
+  const auto target = reinterpret_cast<uintptr_t>(address);
+  char line[2048];
+  while (fgets(line, sizeof(line), maps)) {
+    uintptr_t start, end;
+    char permissions[5];
+    if (sscanf(line, "%" PRIxPTR "-%" PRIxPTR " %4s", &start, &end, permissions) != 3 ||
+        target < start || target >= end)
+      continue;
+    fclose(maps);
+    if (permissions[0] != 'r' || permissions[2] != 'x') {
+      // Native bridges require guest execute access before trampoline relocation.
+      const int access = kReadExecute | (permissions[1] == 'w' ? kWrite : 0);
+      auto page = (void *)ALIGN_FLOOR(address, OSMemory::PageSize());
+      OSMemory::SetPermission(page, OSMemory::PageSize(), static_cast<MemoryPermission>(access));
+    }
+    return;
+  }
+  fclose(maps);
 #endif
 }
 } // namespace features::android

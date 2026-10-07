@@ -176,6 +176,33 @@ __attribute__((noinline)) static int replacement_target() {
   return 42;
 }
 
+static int test_hook_shared_page(size_t page_size) {
+  auto *page = static_cast<uint8_t *>(mmap(nullptr, page_size, PROT_READ | PROT_WRITE | PROT_EXEC,
+                                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+  if (page == MAP_FAILED) return 34;
+  const uint32_t code[] = {0x528000e0u, 0xd65f03c0u}; // mov w0, #7; ret
+  std::memcpy(page, code, sizeof(code));
+  __builtin___clear_cache(reinterpret_cast<char *>(page), reinterpret_cast<char *>(page) + sizeof(code));
+  void *original = nullptr;
+  if (DobbyHook(page, reinterpret_cast<void *>(&replacement_target), &original) != 0 || !original) {
+    munmap(page, page_size);
+    return 35;
+  }
+  const bool writable = (page_protection(page) & (PROT_READ | PROT_WRITE)) == (PROT_READ | PROT_WRITE);
+  if (writable) page[64] = 42;
+  const bool invoked = reinterpret_cast<int (*)()>(page)() == 42 &&
+                       reinterpret_cast<int (*)()>(original)() == 7;
+  const int destroyed = DobbyDestroy(page);
+  const bool restored = destroyed == 0 && reinterpret_cast<int (*)()>(page)() == 7 &&
+                        (page_protection(page) & (PROT_READ | PROT_WRITE)) == (PROT_READ | PROT_WRITE);
+  munmap(page, page_size);
+  if (!writable) {
+    std::fputs("Hook preparation removed write permission from shared data\n", stderr);
+    return 36;
+  }
+  return invoked && restored ? 0 : 37;
+}
+
 int main() {
   const size_t page_size = static_cast<size_t>(sysconf(_SC_PAGESIZE));
   const int zero_page_status = test_live_zero_page(page_size);
@@ -190,6 +217,9 @@ int main() {
   if (capacity_status != 0) return capacity_status;
   const int permission_status = test_patch_permissions(page_size);
   if (permission_status != 0) return permission_status;
+  dobby_set_near_trampoline_required(true);
+  const int shared_hook_status = test_hook_shared_page(page_size);
+  if (shared_hook_status != 0) return shared_hook_status;
   void *replacement = mmap(nullptr, page_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (replacement == MAP_FAILED) {
     std::fprintf(stderr, "replacement mmap failed: %s\n", std::strerror(errno));
